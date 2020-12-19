@@ -10,21 +10,6 @@ let writeChanges = false // set to true to write out the result
 // optional filter. Helps reversing the transformation with a limited image set
 let filesToFilter = [String]() // ["_DSC4222.NEF", "_DSC4290.NEF", "_DSC4385.NEF", "_DSC4418.NEF"]
 
-func rotateRect(_ rect: CGRect, by degrees:Int, imageSize: CGSize ) -> CGRect {
-    let rotation = (degrees % 360) / 90
-
-    switch rotation {
-    case 1:
-        return CGRect( x: rect.minY, y: imageSize.width - rect.maxX, width: rect.height, height: rect.width)
-    case 2:
-        return CGRect( x: imageSize.width - rect.maxX, y: imageSize.height - rect.maxY, width:rect.width, height: rect.height )
-    case 3:
-        return CGRect( x: imageSize.height - rect.maxY, y: rect.minX, width: rect.height, height: rect.width)
-    default:
-        return rect
-    }
-}
-
 func toDouble( _ value: Any? ) -> Double {
     if let f = value as? Double {
         return f
@@ -42,25 +27,40 @@ func equalSize( _ s1: CGSize, _ s2: CGSize, epsilon: CGFloat ) -> Bool {
 
 class CropVersion  : CustomStringConvertible {
     let name : String
-    let size: CGSize
+    let imageSize: CGSize
     let rotation: Double
     let crop: CGRect
 
-    var rotatedRect : CGRect {
-        rotateRect( crop, by: Int( rotation ), imageSize: size)
+    var rotatedCrop : CGRect {
+        rotateRect( crop, by: Int( rotation ), imageSize: imageSize)
+    }
+
+    private func rotateRect(_ rect: CGRect, by degrees:Int, imageSize: CGSize ) -> CGRect {
+        let rotation = (degrees % 360) / 90
+
+        switch rotation {
+        case 1:
+            return CGRect( x: rect.minY, y: imageSize.width - rect.maxX, width: rect.height, height: rect.width)
+        case 2:
+            return CGRect( x: imageSize.width - rect.maxX, y: imageSize.height - rect.maxY, width:rect.width, height: rect.height )
+        case 3:
+            return CGRect( x: imageSize.height - rect.maxY, y: rect.minX, width: rect.height, height: rect.width)
+        default:
+            return rect
+        }
     }
 
     lazy var cropForCaptureOne : CGRect = {
         if isPortrait( Int( rotation ) ) {
             return CGRect( origin: CGPoint( x: crop.origin.x + (crop.size.width / 2.0),
-                                            y: size.height - crop.minY - (crop.size.height / 2.0) ),
+                                            y: imageSize.height - crop.minY - (crop.size.height / 2.0) ),
                            size:crop.size )
         }
         return crop.offsetBy(dx: crop.size.width / 2.0, dy: crop.size.height / 2.0 )
     }()
 
     var description : String {
-        var s = "\(name) \(size) : \(crop)"
+        var s = "\(name) \(imageSize) : \(crop)"
         if rotation != 0 { s = s.appending( " x \(rotation)" ) }
         return s
     }
@@ -69,7 +69,7 @@ class CropVersion  : CustomStringConvertible {
         self.name = name
         self.crop = crop
         self.rotation = rotation
-        self.size = size
+        self.imageSize = size
     }
 }
 
@@ -80,7 +80,7 @@ func isPortrait( _ angle: Int ) -> Bool {
 struct VersionCorrection {
     let pk: Int
     let crop : CGRect
-    let size : CGSize
+    let imageSize : CGSize
     let rotation: Double
 
     // C1 imports images sometimes slightly smaller than Aperture.
@@ -93,11 +93,11 @@ struct VersionCorrection {
             var c = crop.offsetBy(dx: -(crop.size.width / 2.0), dy: -(crop.size.height / 2.0)) // TODO: Test if dx <=> width
 
             // Find the bigger outlier. as it'ts only out of bounds if negative, use min
-            var dx = min( c.minX, size.height - c.maxX )
-            var dy = min( c.minY, size.width - c.maxY )
+            var dx = min( c.minX, imageSize.height - c.maxX )
+            var dy = min( c.minY, imageSize.width - c.maxY )
 
             // square? Adjust the inset so the crop keeps square
-            if size.width.distance( to: size.height ) < 1.0 {
+            if c.size.width.distance( to: c.size.height ) < 1.0 {
                 dx = min( dx, dy )
                 dy = min( dx, dy )
             }
@@ -113,7 +113,7 @@ struct VersionCorrection {
             // and transform back
             let clipped = c.offsetBy(dx: (crop.size.width / 2.0), dy: (crop.size.height / 2.0))
             if clipped != crop {
-                print( "Clipped \(crop) x \(size) -> \(clipped)")
+                print( "Clipped \(crop) in \(imageSize) -> \(clipped)")
             }
             return clipped
         }
@@ -159,7 +159,8 @@ try apQueue.read {
 
                 let version = CropVersion( fname, size:size, crop: rect, rotation: rotation)
 
-                if version.crop.size != .zero, // filter invalid crops and landscape (landscape import worked)
+                if version.crop.size != .zero,
+                   version.crop.size != size, // filter invalid crops and landscape (landscape import worked)
                    version.rotation != 0 {
                     var fileVersions = apVersions[fname] ?? [version]
                     if let v1 = fileVersions.first,
@@ -245,10 +246,10 @@ do {
 
                                     let correction = VersionCorrection( pk: variant_pk,
                                                                         crop: aVersion.cropForCaptureOne,
-                                                                        size: coSize,
+                                                                        imageSize: coSize,
                                                                         rotation: aVersion.rotation )
 
-                                    print( "\(name) \(imageSize) [ap:\(aVersion.size)] \(Int( aVersion.rotation )):\n\(CGRect( origin:coOrigin, size:coSize)) replaced by \(aVersion.cropForCaptureOne) -(clip)-> \(correction.clippedCrop)\n"  )
+                                    print( "\(name) \(imageSize) [ap:\(aVersion.imageSize)] \(Int( aVersion.rotation )):\n\(CGRect( origin:coOrigin, size:coSize)) replaced by \(aVersion.cropForCaptureOne) -(clip)-> \(correction.clippedCrop)\n"  )
                                     // print( aVersion ?? "\(name) Not found", "\n       ", size, coordinates ) // , (image["zadjustmentlayer"] as Int) == variant_pk )
 
                                     correctionsToApply.append( correction )
